@@ -20,6 +20,7 @@ DATA_DIR = os.path.join(SCRIPT_DIR, "data")
 OUTPUT_JSON = os.path.join(DATA_DIR, "rates.json")
 OUTPUT_HTML = os.path.join(SCRIPT_DIR, "index.html")
 EMAIL_CONFIG = os.path.join(SCRIPT_DIR, "email_config.json")
+WECHAT_CONFIG = os.path.join(SCRIPT_DIR, "wechat_config.json")
 VERSION_FILE = os.path.join(SCRIPT_DIR, "version.txt")
 UPDATE_LOG = os.path.join(SCRIPT_DIR, "update_log.json")
 EMAIL_SENT_LOG = os.path.join(SCRIPT_DIR, "email_sent_log.json")
@@ -512,6 +513,119 @@ def send_email_if_needed(alerts):
         print(f"  ❌ 邮件发送失败: {e}")
 
 
+def load_wechat_config():
+    """加载微信推送配置"""
+    if os.path.exists(WECHAT_CONFIG):
+        try:
+            with open(WECHAT_CONFIG, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception as e:
+            print(f"  ⚠️ 读取微信配置失败: {e}")
+            return None
+    return None
+
+
+def send_wechat_if_needed(alerts):
+    """如果存在预警，发送企业微信通知（同一天同一货币对同一级别只发一次）"""
+    cfg = load_wechat_config()
+    if not cfg:
+        print("  ⚠️ 未配置微信推送 (wechat_config.json 不存在)，跳过微信推送")
+        return
+    
+    webhook_url = cfg.get("webhook_url", "")
+    if not webhook_url:
+        print("  ⚠️ 微信配置中未设置 webhook_url，跳过微信推送")
+        return
+    
+    # 检查是否有需要通知的预警（去重后）
+    red_pairs = []
+    yellow_pairs = []
+    filtered_alerts = {}
+    for pair, a in alerts.items():
+        if a["level"] == "none":
+            continue
+        level = a["level"]
+        # 检查今天是否已发送过
+        if not should_send_email(pair, level):  # 复用邮件去重逻辑
+            print(f"  ⏭ {PAIR_LABELS.get(pair, pair)} [{level}] 今天已发送，跳过")
+            continue
+        if level == "red":
+            red_pairs.append(pair)
+            filtered_alerts[pair] = a
+        else:
+            yellow_pairs.append(pair)
+            filtered_alerts[pair] = a
+    
+    if not red_pairs and not yellow_pairs:
+        print("  ✅ 无新预警需要发送微信通知（或今天已发送过）")
+        return
+    
+    # 构建企业微信消息内容（markdown格式）
+    content_lines = [f"## 汇率预警通知\n> 时间：{datetime.now().strftime('%Y-%m-%d %H:%M')}\n"]
+    
+    if red_pairs:
+        content_lines.append(f"**🔴 红色预警**")
+        for pair in red_pairs:
+            a = filtered_alerts[pair]
+            content_lines.append(f"- 【{PAIR_LABELS.get(pair, pair)}】")
+            content_lines.append(f"  - 最新汇率: `{a['latest_val']:.4f}` ({a['latest_date']})")
+            content_lines.append(f"  - 单日变动: `{a['daily_change_pct']:+.2f}%`")
+            if a.get("weekly_change_pct") is not None:
+                content_lines.append(f"  - 周变动: `{a['weekly_change_pct']:+.2f}%`")
+            if a.get("monthly_change_pct") is not None:
+                content_lines.append(f"  - 月变动: `{a['monthly_change_pct']:+.2f}%`")
+            for t in a["triggers"]:
+                if t["level"] == "red":
+                    content_lines.append(f"  - ⚡ {t['detail']}")
+    
+    if yellow_pairs:
+        content_lines.append(f"\n**🟡 黄色预警**")
+        for pair in yellow_pairs:
+            a = filtered_alerts[pair]
+            content_lines.append(f"- 【{PAIR_LABELS.get(pair, pair)}】")
+            content_lines.append(f"  - 最新汇率: `{a['latest_val']:.4f}` ({a['latest_date']})")
+            content_lines.append(f"  - 单日变动: `{a['daily_change_pct']:+.2f}%`")
+            if a.get("weekly_change_pct") is not None:
+                content_lines.append(f"  - 周变动: `{a['weekly_change_pct']:+.2f}%`")
+            if a.get("monthly_change_pct") is not None:
+                content_lines.append(f"  - 月变动: `{a['monthly_change_pct']:+.2f}%`")
+            for t in a["triggers"]:
+                if t["level"] == "yellow":
+                    content_lines.append(f"  - ⚠️ {t['detail']}")
+    
+    content = "\n".join(content_lines)
+    
+    # 企业微信机器人 Webhook 格式
+    payload = {
+        "msgtype": "markdown",
+        "markdown": {
+            "content": content
+        }
+    }
+    
+    try:
+        import urllib.request
+        import urllib.parse
+        
+        data = json.dumps(payload).encode('utf-8')
+        req = urllib.request.Request(webhook_url, data=data, headers={
+            'Content-Type': 'application/json',
+            'User-Agent': 'ExchangeRateTracker/1.0'
+        })
+        
+        with urllib.request.urlopen(req, timeout=10) as response:
+            result = json.loads(response.read().decode('utf-8'))
+            if result.get("errcode") == 0:
+                print(f"  📱 微信通知已发送")
+                # 标记已发送
+                for pair in filtered_alerts:
+                    mark_email_sent(pair, filtered_alerts[pair]["level"])
+            else:
+                print(f"  ❌ 微信发送失败: {result.get('errmsg', '未知错误')}")
+    except Exception as e:
+        print(f"  ❌ 微信发送失败: {e}")
+
+
 def save_and_generate(result):
     # 读取当前版本（用于本次构建），然后递增存回（供下次使用）
     version_str = read_version_str()
@@ -536,7 +650,7 @@ def save_and_generate(result):
     print(f"   日期范围: {result['meta']['start_date']} ~ {result['meta']['end_date']}")
     print(f"   总交易日: {result['meta']['total_days']}")
 
-    # 打印预警摘要 + 发送邮件
+    # 打印预警摘要 + 发送邮件 + 发送微信
     alerts = result.get("alerts", {})
     print("\n--- 预警摘要 ---")
     alert_found = False
@@ -550,6 +664,7 @@ def save_and_generate(result):
     if not alert_found:
         print("  ✅ 当前无预警")
     send_email_if_needed(alerts)
+    send_wechat_if_needed(alerts)
 
 
 def run_full():
@@ -849,7 +964,7 @@ var ACCESS_KEY = "cl2026";
 <div class="header">
   <div class="header-left">
     <h1 style="margin:0; font-size:22px; display:inline-flex; align-items:center; gap:10px;">&#x1f4b1; 汇率追踪面板 <span class="version-badge" style="font-size:14px;">版本 """ + version_str + """</span></h1>
-    <p>数据来源：中国人民银行官方中间价 | 预警规则：日±1%/周±3%/月±4% &#x1f7e1; | 日±2%/周±5%/月±8%/近极值 &#x1f534;</p>
+    <p>数据来源：中国人民银行官方中间价 | 预警规则：日±1%/周±3%/月±4% &#x1f7e1; | 日±2%/周±5%/月±8%/近极值 &#x1f534; | 通知：邮件+微信</p>
   </div>
   <div class="header-right">
     <button class="update-btn" onclick="toggleLog()">&#x1f4dc; 更新记录</button>

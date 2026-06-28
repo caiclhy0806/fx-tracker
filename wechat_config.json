@@ -1,0 +1,5 @@
+{
+  "webhook_url": "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=YOUR_KEY_HERE",
+  "notification_levels": ["red", "yellow"],
+  "enabled": false
+}
