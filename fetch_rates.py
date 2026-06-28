@@ -800,11 +800,10 @@ var ACCESS_KEY = "cl2026";
 
 <div class="header">
   <div class="header-left">
-    <h1>&#x1f4b1; 汇率追踪面板</h1>
+    <h1 style="margin:0; font-size:22px; display:inline-flex; align-items:center; gap:10px;">&#x1f4b1; 汇率追踪面板 <span class="version-badge" style="font-size:14px;">版本 """ + version_str + """</span></h1>
     <p>数据来源：中国人民银行官方中间价 | 预警规则：日±1%/周±3%/月±4% &#x1f7e1; | 日±2%/周±5%/月±8%/近极值 &#x1f534;</p>
   </div>
   <div class="header-right">
-    <div class="version-badge">版本 <span id="versionDisplay">""" + version_str + """</span></div>
     <button class="update-btn" onclick="toggleLog()">&#x1f4dc; 更新记录</button>
   </div>
 </div>
@@ -1288,6 +1287,17 @@ function unlock() {
   if (sessionStorage.getItem("fx_gate_key") === ACCESS_KEY) {
     document.getElementById("gateOverlay").style.display = "none";
     document.getElementById("mainContent").style.display = "block";
+    // 延迟初始化，确保 DATA 已解析完成
+    setTimeout(function() {
+      if (DATA && DATA.meta) {
+        document.getElementById("lastUpdate").textContent =
+          "数据生成时间: " + (DATA.meta.generated_at || "") +
+          " | 数据来源: " + (DATA.meta.data_source || "") +
+          " | 版本: " + (DATA.meta.version || "");
+        renderAlertPanel();
+        render();
+      }
+    }, 100);
   }
 })();
 </script>
