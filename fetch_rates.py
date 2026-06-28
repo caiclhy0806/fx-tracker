@@ -20,6 +20,8 @@ DATA_DIR = os.path.join(SCRIPT_DIR, "data")
 OUTPUT_JSON = os.path.join(DATA_DIR, "rates.json")
 OUTPUT_HTML = os.path.join(SCRIPT_DIR, "index.html")
 EMAIL_CONFIG = os.path.join(SCRIPT_DIR, "email_config.json")
+VERSION_FILE = os.path.join(SCRIPT_DIR, "version.txt")
+UPDATE_LOG = os.path.join(SCRIPT_DIR, "update_log.json")
 
 SYMBOLS = {"美元": "USD", "日元": "JPY", "港币": "HKD"}
 
@@ -39,6 +41,67 @@ PAIR_LABELS = {
     "HKD/JPY": "港币兑日元",
     "JPY/HKD": "日元兑港币",
 }
+
+# ---------- 版本 & 更新日志 ----------
+def read_version_str():
+    """读取当前版本字符串（上次构建的版本），如 'Ver1.0'"""
+    if os.path.exists(VERSION_FILE):
+        with open(VERSION_FILE, "r") as f:
+            return f.read().strip()
+    return "Ver1.0"
+
+def bump_version():
+    """递增版本号，写回文件（供下次使用），返回新版本字符串"""
+    s = read_version_str().lower().replace("v", "").replace("er", "")
+    parts = s.split(".")
+    if len(parts) == 2:
+        major, minor = int(parts[0]), int(parts[1])
+    else:
+        major, minor = 1, 0
+    minor += 1
+    ver_str = f"Ver{major}.{minor}"
+    with open(VERSION_FILE, "w") as f:
+        f.write(ver_str)
+    return ver_str
+
+def record_update(version_str):
+    """记录一次更新到 update_log.json"""
+    now = datetime.now()
+    now_str = now.strftime("%Y-%m-%d %H:%M:%S")
+    today = now.strftime("%Y-%m-%d")
+
+    logs = []
+    if os.path.exists(UPDATE_LOG):
+        with open(UPDATE_LOG, "r", encoding="utf-8") as f:
+            logs = json.load(f)
+
+    # 统计今天已有几次更新
+    today_count = sum(1 for e in logs if e.get("date", "").startswith(today))
+    count_today = today_count + 1
+
+    entry = {
+        "version": version_str,
+        "datetime": now_str,
+        "date": today,
+        "time": now.strftime("%H:%M:%S"),
+        "count_today": count_today,
+    }
+    logs.append(entry)
+
+    # 只保留最近 100 条
+    logs = logs[-100:]
+
+    with open(UPDATE_LOG, "w", encoding="utf-8") as f:
+        json.dump(logs, f, ensure_ascii=False, indent=2)
+
+    return logs
+
+def read_update_logs():
+    """读取更新日志"""
+    if os.path.exists(UPDATE_LOG):
+        with open(UPDATE_LOG, "r", encoding="utf-8") as f:
+            return json.load(f)
+    return []
 
 
 def load_existing():
@@ -402,16 +465,25 @@ def send_email_if_needed(alerts):
 
 
 def save_and_generate(result):
+    # 读取当前版本（用于本次构建），然后递增存回（供下次使用）
+    version_str = read_version_str()
+    bump_version()
+    update_logs = record_update(version_str)
+
+    result["meta"]["version"] = version_str
+    result["meta"]["generated_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
     os.makedirs(DATA_DIR, exist_ok=True)
     with open(OUTPUT_JSON, "w", encoding="utf-8") as f:
         json.dump(result, f, ensure_ascii=False, indent=2)
 
     data_json = json.dumps(result, ensure_ascii=False)
-    html = generate_html(data_json)
+    update_logs_json = json.dumps(update_logs, ensure_ascii=False)
+    html = generate_html(data_json, version_str, update_logs_json)
     with open(OUTPUT_HTML, "w", encoding="utf-8") as f:
         f.write(html)
 
-    print(f"\n✅ 数据已保存: {OUTPUT_JSON}")
+    print(f"\n✅ 版本 {version_str} | 数据已保存: {OUTPUT_JSON}")
     print(f"✅ 网页已生成: {OUTPUT_HTML}")
     print(f"   日期范围: {result['meta']['start_date']} ~ {result['meta']['end_date']}")
     print(f"   总交易日: {result['meta']['total_days']}")
@@ -552,7 +624,7 @@ def run_incremental():
     print(f"✅ 增量更新完成，最新日期: {date_strs[-1]}")
 
 
-def generate_html(data_json):
+def generate_html(data_json, version_str, update_logs_json):
     return """<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -663,6 +735,45 @@ def generate_html(data_json):
   .gate-box button:hover { background: #3a56d4; }
   .gate-error { color: #c62828; font-size: 13px; margin-top: 10px; min-height: 20px; }
   .gate-footer { color: rgba(255,255,255,0.6); font-size: 12px; margin-top: 20px; }
+
+  /* 版本 & 更新日志 */
+  .header { display: flex; align-items: center; justify-content: space-between; background: linear-gradient(135deg, #1a237e, #283593); color: white; padding: 20px 32px; }
+  .header-left h1 { font-size: 22px; font-weight: 600; }
+  .header-left p { font-size: 13px; opacity: 0.85; margin-top: 4px; }
+  .header-right { text-align: right; }
+  .version-badge {
+    display: inline-block; background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.3);
+    border-radius: 20px; padding: 6px 16px; font-size: 14px; font-weight: 600; letter-spacing: 1px;
+  }
+  .version-badge span { color: #ffd54f; }
+  .update-btn {
+    display: block; margin-top: 8px; background: none; border: 1px solid rgba(255,255,255,0.3);
+    color: rgba(255,255,255,0.8); border-radius: 6px; padding: 4px 12px;
+    font-size: 12px; cursor: pointer; width: 100%;
+  }
+  .update-btn:hover { background: rgba(255,255,255,0.1); color: white; }
+
+  .log-panel {
+    background: white; border-radius: 12px; padding: 0; box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+    margin-bottom: 20px; overflow: hidden; display: none;
+  }
+  .log-panel.show { display: block; }
+  .log-header {
+    background: #1a237e; color: white; padding: 12px 20px; font-size: 14px; font-weight: 600;
+    display: flex; justify-content: space-between; align-items: center; cursor: pointer;
+  }
+  .log-header:hover { background: #283593; }
+  .log-body { max-height: 320px; overflow-y: auto; }
+  .log-item {
+    display: flex; align-items: center; padding: 10px 20px; border-bottom: 1px solid #f0f0f0;
+    font-size: 13px; gap: 16px;
+  }
+  .log-item:last-child { border-bottom: none; }
+  .log-item:nth-child(odd) { background: #fafbfc; }
+  .log-version { font-weight: 700; color: #1a237e; min-width: 60px; }
+  .log-datetime { color: #555; min-width: 160px; font-family: monospace; }
+  .log-count { color: #888; font-size: 12px; }
+  .log-empty { padding: 20px; text-align: center; color: #999; font-size: 13px; }
 </style>
 <script>
 // ===== 访问密钥配置 =====
@@ -688,11 +799,26 @@ var ACCESS_KEY = "cl2026";
 <div id="mainContent" style="display:none">
 
 <div class="header">
-  <h1>&#x1f4b1; 汇率追踪面板</h1>
-  <p>数据来源：中国人民银行官方中间价 | 预警规则：日±1%/周±3%/月±4% &#x1f7e1; | 日±2%/周±5%/月±8%/近极值 &#x1f534;</p>
+  <div class="header-left">
+    <h1>&#x1f4b1; 汇率追踪面板</h1>
+    <p>数据来源：中国人民银行官方中间价 | 预警规则：日±1%/周±3%/月±4% &#x1f7e1; | 日±2%/周±5%/月±8%/近极值 &#x1f534;</p>
+  </div>
+  <div class="header-right">
+    <div class="version-badge">版本 <span id="versionDisplay">{VERSION_STR}</span></div>
+    <button class="update-btn" onclick="toggleLog()">&#x1f4dc; 更新记录</button>
+  </div>
 </div>
 
 <div class="container">
+  <!-- 更新日志面板 -->
+  <div class="log-panel" id="logPanel">
+    <div class="log-header" onclick="toggleLog()">
+      <span>&#x1f4dc; 更新记录</span>
+      <span id="logToggleIcon">&#x25b2; 收起</span>
+    </div>
+    <div class="log-body" id="logBody"></div>
+  </div>
+
   <!-- 全局预警面板 -->
   <div class="alert-panel" id="alertPanel"></div>
 
@@ -745,6 +871,7 @@ var ACCESS_KEY = "cl2026";
 
 <script>
 var DATA = """ + data_json + """;
+var UPDATE_LOGS = """ + update_logs_json + """;
 
 var currentPair = "USD/CNY";
 var currentView = "daily";
@@ -760,13 +887,43 @@ var PAIR_LABELS = {
 };
 
 (function init() {
-  // 初始化推迟到密钥验证通过后执行（见 unlock 函数）
   if (!DATA || !DATA.meta) {
     document.querySelector(".container").innerHTML =
       '<div style="color:#c62828;padding:40px;text-align:center;font-size:14px">数据加载失败，请运行 fetch_rates.py 生成数据。</div>';
     return;
   }
+  renderUpdateLogs();
 })();
+
+function renderUpdateLogs() {
+  var body = document.getElementById("logBody");
+  if (!UPDATE_LOGS || UPDATE_LOGS.length === 0) {
+    body.innerHTML = '<div class="log-empty">暂无更新记录</div>';
+    return;
+  }
+  var html = "";
+  for (var i = UPDATE_LOGS.length - 1; i >= 0; i--) {
+    var e = UPDATE_LOGS[i];
+    html += '<div class="log-item">' +
+      '<span class="log-version">' + (e.version || "") + '</span>' +
+      '<span class="log-datetime">' + (e.datetime || "") + '</span>' +
+      '<span class="log-count">当日第 ' + (e.count_today || "?") + ' 次更新</span>' +
+    '</div>';
+  }
+  body.innerHTML = html;
+}
+
+function toggleLog() {
+  var panel = document.getElementById("logPanel");
+  var icon = document.getElementById("logToggleIcon");
+  if (panel.classList.contains("show")) {
+    panel.classList.remove("show");
+    icon.innerHTML = '&#x25bc; 展开';
+  } else {
+    panel.classList.add("show");
+    icon.innerHTML = '&#x25b2; 收起';
+  }
+}
 
 // ===== 预警面板 =====
 function renderAlertPanel() {
