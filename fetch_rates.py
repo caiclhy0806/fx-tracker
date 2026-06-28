@@ -22,6 +22,7 @@ OUTPUT_HTML = os.path.join(SCRIPT_DIR, "index.html")
 EMAIL_CONFIG = os.path.join(SCRIPT_DIR, "email_config.json")
 VERSION_FILE = os.path.join(SCRIPT_DIR, "version.txt")
 UPDATE_LOG = os.path.join(SCRIPT_DIR, "update_log.json")
+EMAIL_SENT_LOG = os.path.join(SCRIPT_DIR, "email_sent_log.json")
 
 SYMBOLS = {"美元": "USD", "日元": "JPY", "港币": "HKD"}
 
@@ -49,6 +50,43 @@ def read_version_str():
         with open(VERSION_FILE, "r") as f:
             return f.read().strip()
     return "Ver1.0"
+
+# ---------- 邮件去重 ----------
+def load_email_sent_log():
+    """加载邮件发送记录，返回 {pair: {level: 'YYYY-MM-DD'}}"""
+    if os.path.exists(EMAIL_SENT_LOG):
+        try:
+            with open(EMAIL_SENT_LOG, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {}
+
+def save_email_sent_log(log):
+    """保存邮件发送记录"""
+    with open(EMAIL_SENT_LOG, "w", encoding="utf-8") as f:
+        json.dump(log, f, ensure_ascii=False, indent=2)
+
+def should_send_email(pair, level):
+    """检查今天是否已经给该货币对发送过同级别预警"""
+    log = load_email_sent_log()
+    today = datetime.now().strftime("%Y-%m-%d")
+    if pair not in log:
+        return True
+    if level not in log[pair]:
+        return True
+    last_sent_date = log[pair][level]
+    return last_sent_date != today
+
+def mark_email_sent(pair, level):
+    """标记该货币对该级别预警今天已发送"""
+    log = load_email_sent_log()
+    today = datetime.now().strftime("%Y-%m-%d")
+    if pair not in log:
+        log[pair] = {}
+    log[pair][level] = today
+    # 清理30天前的记录
+    save_email_sent_log(log)
 
 def bump_version():
     """递增版本号，写回文件（供下次使用），返回新版本字符串"""
@@ -392,7 +430,7 @@ def calc_alerts(daily):
 
 
 def send_email_if_needed(alerts):
-    """如果存在预警，发送邮件通知"""
+    """如果存在预警，发送邮件通知（同一天同一货币对同一级别只发一次）"""
     if not os.path.exists(EMAIL_CONFIG):
         print("  ⚠️ 未配置邮件 (email_config.json 不存在)，跳过邮件发送")
         return
@@ -404,20 +442,27 @@ def send_email_if_needed(alerts):
         print(f"  ⚠️ 读取邮件配置失败: {e}")
         return
 
-    # 检查是否有需要通知的预警
+    # 检查是否有需要通知的预警（去重后）
     red_pairs = []
     yellow_pairs = []
     filtered_alerts = {}
     for pair, a in alerts.items():
-        if a["level"] == "red":
+        if a["level"] == "none":
+            continue
+        level = a["level"]
+        # 检查今天是否已发送过
+        if not should_send_email(pair, level):
+            print(f"  ⏭ {PAIR_LABELS.get(pair, pair)} [{level}] 今天已发送，跳过")
+            continue
+        if level == "red":
             red_pairs.append(pair)
             filtered_alerts[pair] = a
-        elif a["level"] == "yellow":
+        else:
             yellow_pairs.append(pair)
             filtered_alerts[pair] = a
 
     if not red_pairs and not yellow_pairs:
-        print("  ✅ 无预警，不发送邮件")
+        print("  ✅ 无新预警需要发送邮件（或今天已发送过）")
         return
 
     # 构建邮件内容
@@ -460,6 +505,9 @@ def send_email_if_needed(alerts):
         server.sendmail(cfg["sender"], cfg["recipients"], msg.as_string())
         server.quit()
         print(f"  📧 预警邮件已发送至 {', '.join(cfg['recipients'])}")
+        # 标记已发送
+        for pair in filtered_alerts:
+            mark_email_sent(pair, filtered_alerts[pair]["level"])
     except Exception as e:
         print(f"  ❌ 邮件发送失败: {e}")
 
