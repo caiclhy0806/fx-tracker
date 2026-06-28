@@ -667,7 +667,7 @@ def generate_html(data_json):
 <script>
 // ===== 访问密钥配置 =====
 // 修改此值可更换访问密钥，分享链接时需一并告知密钥
-var ACCESS_KEY = "fx2026";
+var ACCESS_KEY = "cl2026";
 </script>
 </head>
 <body>
