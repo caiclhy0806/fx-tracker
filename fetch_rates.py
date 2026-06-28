@@ -804,7 +804,7 @@ var ACCESS_KEY = "cl2026";
     <p>数据来源：中国人民银行官方中间价 | 预警规则：日±1%/周±3%/月±4% &#x1f7e1; | 日±2%/周±5%/月±8%/近极值 &#x1f534;</p>
   </div>
   <div class="header-right">
-    <div class="version-badge">版本 <span id="versionDisplay">{VERSION_STR}</span></div>
+    <div class="version-badge">版本 <span id="versionDisplay">""" + version_str + """</span></div>
     <button class="update-btn" onclick="toggleLog()">&#x1f4dc; 更新记录</button>
   </div>
 </div>
