@@ -489,28 +489,38 @@ def send_email_if_needed(alerts):
 
     body = "\n".join(body_lines)
 
-    try:
-        msg = MIMEMultipart()
-        msg["From"] = cfg["sender"]
-        msg["To"] = ", ".join(cfg["recipients"])
-        msg["Subject"] = subject
-        msg.attach(MIMEText(body, "plain", "utf-8"))
+    # 重试发送邮件（最多3次）
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            msg = MIMEMultipart()
+            msg["From"] = cfg["sender"]
+            msg["To"] = ", ".join(cfg["recipients"])
+            msg["Subject"] = subject
+            msg.attach(MIMEText(body, "plain", "utf-8"))
 
-        if cfg.get("smtp_port") == 465:
-            server = smtplib.SMTP_SSL(cfg["smtp_host"], cfg["smtp_port"], timeout=15)
-        else:
-            server = smtplib.SMTP(cfg["smtp_host"], cfg["smtp_port"], timeout=15)
-            server.starttls()
+            if cfg.get("smtp_port") == 465:
+                server = smtplib.SMTP_SSL(cfg["smtp_host"], cfg["smtp_port"], timeout=15)
+            else:
+                server = smtplib.SMTP(cfg["smtp_host"], cfg["smtp_port"], timeout=15)
+                server.starttls()
 
-        server.login(cfg["sender"], cfg["password"])
-        server.sendmail(cfg["sender"], cfg["recipients"], msg.as_string())
-        server.quit()
-        print(f"  📧 预警邮件已发送至 {', '.join(cfg['recipients'])}")
-        # 标记已发送
-        for pair in filtered_alerts:
-            mark_email_sent(pair, filtered_alerts[pair]["level"])
-    except Exception as e:
-        print(f"  ❌ 邮件发送失败: {e}")
+            server.login(cfg["sender"], cfg["password"])
+            server.sendmail(cfg["sender"], cfg["recipients"], msg.as_string())
+            server.quit()
+            print(f"  📧 预警邮件已发送至 {', '.join(cfg['recipients'])} (尝试 {attempt+1}/{max_retries})")
+            # 标记已发送（只在成功后才标记）
+            for pair in filtered_alerts:
+                mark_email_sent(pair, filtered_alerts[pair]["level"])
+            break  # 成功发送，退出重试循环
+        except Exception as e:
+            print(f"  ❌ 邮件发送失败 (尝试 {attempt+1}/{max_retries}): {e}")
+            if attempt < max_retries - 1:
+                import time
+                print(f"  ⏳ 等待5秒后重试...")
+                time.sleep(5)
+            else:
+                print(f"  ❌ 邮件发送失败，已达最大重试次数")
 
 
 def load_wechat_config():
@@ -617,9 +627,6 @@ def send_wechat_if_needed(alerts):
             result = json.loads(response.read().decode('utf-8'))
             if result.get("errcode") == 0:
                 print(f"  📱 微信通知已发送")
-                # 标记已发送
-                for pair in filtered_alerts:
-                    mark_email_sent(pair, filtered_alerts[pair]["level"])
             else:
                 print(f"  ❌ 微信发送失败: {result.get('errmsg', '未知错误')}")
     except Exception as e:
