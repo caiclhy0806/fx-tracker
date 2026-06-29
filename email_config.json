@@ -1,8 +1,0 @@
-{
-  "_说明": "邮件发送配置。修改此文件后，运行 fetch_rates.py 时若有预警将自动发送邮件。",
-  "smtp_host": "smtp.126.com",
-  "smtp_port": 465,
-  "sender": "clhy0806@126.com",
-  "password": "LRXHujdiuBdcCW2c",
-  "recipients": ["clhy0806@126.com"]
-}
