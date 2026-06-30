@@ -3,12 +3,18 @@ name: 汇率数据每日抓取
 on:
   schedule:
     # 每天早上10:00（北京时间）运行
-    - cron: '0 2 * * *'  # UTC 2:00 = 北京时间 10:00
+    # UTC 2:00 = 北京时间 10:00
+    - cron: '0 2 * * *'
   workflow_dispatch:  # 支持手动触发
+
+# 需要写权限才能推送代码
+permissions:
+  contents: write
 
 jobs:
   fetch-and-update:
     runs-on: ubuntu-latest
+    if: false  # 已暂停，改用 WorkBuddy 本地自动化
     
     steps:
     - name: 检出代码
@@ -51,13 +57,13 @@ jobs:
         git config user.email "actions@github.com"
         
         # 检查是否有文件变更
-        if [[ -z $(git status -s) ]]; then
-          echo "📊 无数据更新，跳过提交"
+        if [ -z "$(git status -s)" ]; then
+          echo "无数据更新，跳过提交"
           exit 0
         fi
         
         # 提交更新
         git add -A
-        git commit -m "自动更新: $(date +'%Y-%m-%d %H:%M')"
+        git commit -m "自动更新: $(date '+%Y-%m-%d %H:%M')"
         git push
       continue-on-error: true  # 如果没有更新，允许失败
