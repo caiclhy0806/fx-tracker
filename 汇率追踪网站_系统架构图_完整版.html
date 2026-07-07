@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>汇率追踪网站 - 系统架构图</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+        .container {
+            background: white;
+            border-radius: 20px;
+            padding: 40px;
+            max-width: 1400px;
+            width: 100%;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+        }
+        h1 {
+            text-align: center;
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 32px;
+        }
+        .subtitle {
+            text-align: center;
+            color: #666;
+            margin-bottom: 40px;
+            font-size: 16px;
+        }
+        .architecture {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        .layer {
+            background: #f8f9fa;
+            border-radius: 12px;
+            padding: 20px;
+            border: 2px solid #e9ecef;
+        }
+        .layer-title {
+            font-size: 18px;
+            font-weight: bold;
+            color: #495057;
+            margin-bottom: 15px;
+            text-align: center;
+            padding-bottom: 10px;
+            border-bottom: 2px solid #dee2e6;
+        }
+        .component {
+            background: white;
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 12px;
+            border-left: 4px solid #007bff;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .component-title {
+            font-weight: bold;
+            color: #212529;
+            margin-bottom: 8px;
+            font-size: 14px;
+        }
+        .component-desc {
+            font-size: 12px;
+            color: #6c757d;
+            line-height: 1.5;
+        }
+        .data-flow {
+            background: #fff3cd;
+            border: 2px solid #ffc107;
+            border-radius: 12px;
+            padding: 20px;
+            margin: 20px 0;
+        }
+        .data-flow-title {
+            font-size: 16px;
+            font-weight: bold;
+            color: #856404;
+            margin-bottom: 15px;
+        }
+        .flow-steps {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+        .flow-step {
+            background: white;
+            padding: 10px 15px;
+            border-radius: 8px;
+            font-size: 13px;
+            color: #856404;
+            border: 1px solid #ffc107;
+            flex: 1;
+            text-align: center;
+            min-width: 120px;
+        }
+        .arrow {
+            color: #ffc107;
+            font-size: 20px;
+            font-weight: bold;
+        }
+        .status {
+            display: flex;
+            justify-content: space-around;
+            margin-top: 30px;
+            padding: 20px;
+            background: #d4edda;
+            border-radius: 12px;
+            border: 2px solid #28a745;
+        }
+        .status-item {
+            text-align: center;
+        }
+        .status-label {
+            font-size: 12px;
+            color: #155724;
+            margin-bottom: 5px;
+        }
+        .status-value {
+            font-size: 18px;
+            font-weight: bold;
+            color: #155724;
+        }
+        .note {
+            background: #d1ecf1;
+            border: 2px solid #17a2b8;
+            border-radius: 8px;
+            padding: 15px;
+            margin-top: 20px;
+            font-size: 13px;
+            color: #0c5460;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>💱 汇率追踪网站 - 系统架构图</h1>
+        <p class="subtitle">数据流向 · 部署架构 · 用户访问 · Ver1.16</p>
+        
+        <div class="architecture">
+            <!-- 数据源层 -->
+            <div class="layer">
+                <div class="layer-title">📊 数据源层</div>
+                <div class="component" style="border-left-color: #28a745;">
+                    <div class="component-title">央行中间价</div>
+                    <div class="component-desc">
+                        中国人民银行官方汇率<br>
+                        每个工作日 9:15 更新<br>
+                        数据范围: 2021-06-21 ~ 至今
+                    </div>
+                </div>
+                <div class="component" style="border-left-color: #28a745;">
+                    <div class="component-title">akshare 库</div>
+                    <div class="component-desc">
+                        currency_boc_sina()<br>
+                        获取美元/日元/港币汇率<br>
+                        Python 金融数据接口
+                    </div>
+                </div>
+            </div>
+            
+            <!-- 数据处理层 -->
+            <div class="layer">
+                <div class="layer-title">⚙️ 数据处理层</div>
+                <div class="component" style="border-left-color: #007bff;">
+                    <div class="component-title">fetch_rates.py</div>
+                    <div class="component-desc">
+                        核心处理脚本<br>
+                        • 增量数据抓取<br>
+                        • 计算预警信息<br>
+                        • 生成网页和邮件<br>
+                        • 版本号管理
+                    </div>
+                </div>
+                <div class="component" style="border-left-color: #007bff;">
+                    <div class="component-title">预警系统</div>
+                    <div class="component-desc">
+                        黄色预警: 日±1% 周±3%<br>
+                        红色预警: 日±2% 距极值<1%<br>
+                        支持5个货币对监控
+                    </div>
+                </div>
+            </div>
+            
+            <!-- 输出层 -->
+            <div class="layer">
+                <div class="layer-title">📁 输出层</div>
+                <div class="component" style="border-left-color: #6f42c1;">
+                    <div class="component-title">index.html</div>
+                    <div class="component-desc">
+                        自包含网页<br>
+                        数据内嵌在 &lt;script&gt; 标签<br>
+                        无需外部API调用
+                    </div>
+                </div>
+                <div class="component" style="border-left-color: #6f42c1;">
+                    <div class="component-title">数据文件</div>
+                    <div class="component-desc">
+                        rates.json - 原始数据<br>
+                        version.txt - 版本号<br>
+                        update_log.json - 更新记录<br>
+                        email_sent_log.json - 邮件去重
+                    </div>
+                </div>
+            </div>
+            
+            <!-- 部署层 -->
+            <div class="layer">
+                <div class="layer-title">🚀 部署层</div>
+                <div class="component" style="border-left-color: #dc3545;">
+                    <div class="component-title">GitHub Repository</div>
+                    <div class="component-desc">
+                        caiclhy0806/fx-tracker<br>
+                        公有仓库<br>
+                        自动部署到 Pages
+                    </div>
+                </div>
+                <div class="component" style="border-left-color: #dc3545;">
+                    <div class="component-title">自定义域名</div>
+                    <div class="component-desc">
+                        ex.hplcx.com<br>
+                        CNAME → caiclhy0806.github.io<br>
+                        访问密钥: cl2026
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- 数据流向 -->
+        <div class="data-flow">
+            <div class="data-flow-title">📈 每日数据更新流程</div>
+            <div class="flow-steps">
+                <div class="flow-step">1. 用户触发更新</div>
+                <div class="arrow">→</div>
+                <div class="flow-step">2. 抓取央行数据</div>
+                <div class="arrow">→</div>
+                <div class="flow-step">3. 计算预警</div>
+                <div class="arrow">→</div>
+                <div class="flow-step">4. 生成网页</div>
+                <div class="arrow">→</div>
+                <div class="flow-step">5. 发送邮件</div>
+                <div class="arrow">→</div>
+                <div class="flow-step">6. 推送到GitHub</div>
+                <div class="arrow">→</div>
+                <div class="flow-step">7. 网站自动更新</div>
+            </div>
+        </div>
+        
+        <!-- 通知系统 -->
+        <div class="architecture" style="grid-template-columns: repeat(2, 1fr);">
+            <div class="layer">
+                <div class="layer-title">📧 邮件通知系统</div>
+                <div class="component" style="border-left-color: #fd7e14;">
+                    <div class="component-title">SMTP 配置</div>
+                    <div class="component-desc">
+                        smtp.126.com:465<br>
+                        发件人: clhy0806@126.com<br>
+                        收件人: clhy0806@126.com
+                    </div>
+                </div>
+                <div class="component" style="border-left-color: #fd7e14;">
+                    <div class="component-title">去重机制</div>
+                    <div class="component-desc">
+                        同一天、同一货币对<br>
+                        同一级别只发一次<br>
+                        记录在 email_sent_log.json
+                    </div>
+                </div>
+            </div>
+            
+            <div class="layer">
+                <div class="layer-title">📱 微信通知系统</div>
+                <div class="component" style="border-left-color: #28a745;">
+                    <div class="component-title">企业微信 Webhook</div>
+                    <div class="component-desc">
+                        已配置接口<br>
+                        当前状态: 已暂停<br>
+                        支持 Markdown 格式消息
+                    </div>
+                </div>
+                <div class="component" style="border-left-color: #28a745;">
+                    <div class="component-title">去重机制</div>
+                    <div class="component-desc">
+                        复用邮件去重逻辑<br>
+                        避免重复推送<br>
+                        可独立控制开关
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- 系统状态 -->
+        <div class="status">
+            <div class="status-item">
+                <div class="status-label">最新数据</div>
+                <div class="status-value">2026-07-07</div>
+            </div>
+            <div class="status-item">
+                <div class="status-label">总交易日</div>
+                <div class="status-value">1221 天</div>
+            </div>
+            <div class="status-item">
+                <div class="status-label">当前版本</div>
+                <div class="status-value">Ver1.16</div>
+            </div>
+            <div class="status-item">
+                <div class="status-label">货币对数量</div>
+                <div class="status-value">5 个</div>
+            </div>
+            <div class="status-item">
+                <div class="status-label">自动化状态</div>
+                <div class="status-value" style="color: #856404;">已暂停</div>
+            </div>
+        </div>
+        
+        <div class="note">
+            <strong>📝 说明：</strong><br>
+            • 系统当前采用<strong>手动更新模式</strong>（自动化任务已暂停）<br>
+            • 需要更新时，用户可运行 <code>手动更新.sh</code> 脚本或告知 AI 助手<br>
+            • 邮件通知系统正常运行，预警触发时会自动发送<br>
+            • 微信通知系统已配置但暂停，需要时可启用<br>
+            • 网站访问地址：<a href="https://ex.hplcx.com" target="_blank">https://ex.hplcx.com</a>（密钥: cl2026）
+        </div>
+    </div>
+</body>
+</html>
