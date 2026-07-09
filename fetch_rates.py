@@ -8,6 +8,8 @@
 import json
 import os
 import smtplib
+import subprocess
+import time
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from datetime import datetime, timedelta
@@ -633,6 +635,49 @@ def send_wechat_if_needed(alerts):
         print(f"  ❌ 微信发送失败: {e}")
 
 
+def git_commit_and_push():
+    """将本次生成的所有文件提交并推送到 GitHub（带重试与冲突自动 rebase）。
+
+    返回 True 表示推送成功（或本就无改动），False 表示重试后仍失败。
+    关键：网页更新与邮件通知必须在同一次脚本运行中完成，避免“邮件发了但网页没更”的问题。
+    """
+    try:
+        st = subprocess.run(["git", "status", "--porcelain"],
+                            cwd=SCRIPT_DIR, capture_output=True, text=True, timeout=20)
+        if not st.stdout.strip():
+            print("  ℹ️ 无文件改动，跳过 git 提交")
+            return True
+    except Exception as e:
+        print(f"  ⚠️ git status 检查失败: {e}")
+        return False
+
+    max_retries = 3
+    for attempt in range(1, max_retries + 1):
+        try:
+            subprocess.run(["git", "add", "-A"], cwd=SCRIPT_DIR,
+                           check=True, capture_output=True, text=True, timeout=30)
+            ts = datetime.now().strftime("%Y-%m-%d %H:%M")
+            msg = f"自动更新: {ts}"
+            subprocess.run(["git", "commit", "-m", msg], cwd=SCRIPT_DIR,
+                           check=True, capture_output=True, text=True, timeout=30)
+            subprocess.run(["git", "push", "origin", "main"], cwd=SCRIPT_DIR,
+                           check=True, capture_output=True, text=True, timeout=60)
+            print(f"  ✅ 代码已推送至 GitHub (第 {attempt} 次尝试)")
+            return True
+        except subprocess.CalledProcessError as e:
+            print(f"  ⚠️ git 操作失败 (第 {attempt}/{max_retries} 次): {e}")
+            if attempt < max_retries:
+                # 若远程有新提交，先 rebase 再重试
+                try:
+                    subprocess.run(["git", "pull", "--rebase", "origin", "main"],
+                                  cwd=SCRIPT_DIR, capture_output=True, text=True, timeout=60)
+                except Exception:
+                    pass
+                time.sleep(10)
+    print("  ❌ git 推送失败（已重试 3 次），网页可能未更新，请检查网络或手动运行。")
+    return False
+
+
 def save_and_generate(result):
     # 读取当前版本（用于本次构建），然后递增存回（供下次使用）
     version_str = read_version_str()
@@ -656,6 +701,11 @@ def save_and_generate(result):
     print(f"✅ 网页已生成: {OUTPUT_HTML}")
     print(f"   日期范围: {result['meta']['start_date']} ~ {result['meta']['end_date']}")
     print(f"   总交易日: {result['meta']['total_days']}")
+
+    # 先推送至 GitHub（确保网页更新与邮件同步），再发送通知
+    push_ok = git_commit_and_push()
+    if not push_ok:
+        print("  ⚠️ 网页推送失败，但仍继续发送预警邮件。下次运行会重试推送。")
 
     # 打印预警摘要 + 发送邮件 + 发送微信
     alerts = result.get("alerts", {})
@@ -800,6 +850,9 @@ def generate_html(data_json, version_str, update_logs_json):
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
 <title>汇率追踪面板 — 央行中间价</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <style>
