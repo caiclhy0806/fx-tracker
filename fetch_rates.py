@@ -787,13 +787,27 @@ def run_incremental():
         return
 
     fetch_start = last_dt + timedelta(days=1)
-    print(f"=== 增量更新 ===")
-    print(f"  上次最新: {end_date_str}")
-    print(f"  抓取范围: {fetch_start.strftime('%Y-%m-%d')} ~ {today_dt.strftime('%Y-%m-%d')}")
-
-    usd_rates = get_rates_for_range("美元", "USD", fetch_start, today_dt)
-    jpy_rates = get_rates_for_range("日元", "JPY", fetch_start, today_dt)
-    hkd_rates = get_rates_for_range("港币", "HKD", fetch_start, today_dt)
+    # 央行中间价约 9:15 发布，若早晨运行时当日数据尚未入库，则等待后重试，
+    # 确保网站最终体现“当天”数据。仅工作日重试（周末/节假日无新数据则直接采用现有数据）。
+    max_attempts = 4
+    is_weekday = today_dt.weekday() < 5
+    usd_rates = jpy_rates = hkd_rates = {}
+    for attempt in range(1, max_attempts + 1):
+        print(f"=== 增量更新 (尝试 {attempt}/{max_attempts}) ===")
+        print(f"  上次最新: {end_date_str}")
+        print(f"  抓取范围: {fetch_start.strftime('%Y-%m-%d')} ~ {today_dt.strftime('%Y-%m-%d')}")
+        usd_rates = get_rates_for_range("美元", "USD", fetch_start, today_dt)
+        jpy_rates = get_rates_for_range("日元", "JPY", fetch_start, today_dt)
+        hkd_rates = get_rates_for_range("港币", "HKD", fetch_start, today_dt)
+        if usd_rates or jpy_rates or hkd_rates:
+            break
+        if attempt < max_attempts and is_weekday:
+            wait = 300  # 等待 5 分钟再重试
+            print(f"  当日数据尚未发布，{wait // 60} 分钟后重试...")
+            time.sleep(wait)
+        else:
+            # 非工作日或无剩余重试：不再等待
+            break
 
     if not usd_rates and not jpy_rates and not hkd_rates:
         print("  期间无新数据，重新计算预警并生成网页...")
