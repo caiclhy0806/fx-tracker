@@ -656,10 +656,16 @@ def git_commit_and_push():
         try:
             subprocess.run(["git", "add", "-A"], cwd=SCRIPT_DIR,
                            check=True, capture_output=True, text=True, timeout=30)
-            ts = datetime.now().strftime("%Y-%m-%d %H:%M")
-            msg = f"自动更新: {ts}"
-            subprocess.run(["git", "commit", "-m", msg], cwd=SCRIPT_DIR,
-                           check=True, capture_output=True, text=True, timeout=30)
+            # 仅当有暂存改动时才提交（rebase 后改动可能已处于已提交状态）
+            diff = subprocess.run(["git", "diff", "--cached", "--quiet"],
+                                  cwd=SCRIPT_DIR, capture_output=True, text=True, timeout=20)
+            if diff.returncode != 0:
+                ts = datetime.now().strftime("%Y-%m-%d %H:%M")
+                msg = f"自动更新: {ts}"
+                subprocess.run(["git", "commit", "-m", msg], cwd=SCRIPT_DIR,
+                               check=True, capture_output=True, text=True, timeout=30)
+            else:
+                print("  ℹ️ 改动已在之前提交，跳过重复提交")
             subprocess.run(["git", "push", "origin", "main"], cwd=SCRIPT_DIR,
                            check=True, capture_output=True, text=True, timeout=60)
             print(f"  ✅ 代码已推送至 GitHub (第 {attempt} 次尝试)")
@@ -667,12 +673,21 @@ def git_commit_and_push():
         except subprocess.CalledProcessError as e:
             print(f"  ⚠️ git 操作失败 (第 {attempt}/{max_retries} 次): {e}")
             if attempt < max_retries:
-                # 若远程有新提交，先 rebase 再重试
+                # 若远程有新提交，尝试 rebase 同步
                 try:
                     subprocess.run(["git", "pull", "--rebase", "origin", "main"],
                                   cwd=SCRIPT_DIR, capture_output=True, text=True, timeout=60)
                 except Exception:
                     pass
+                # 无论 rebase 是否因自动生成的数据文件(data/rates.json)冲突而中断，
+                # 都必须清理进行中的 rebase/merge 状态，否则仓库会卡死、
+                # 工作区残留冲突标记，导致下次运行 load_existing() 解析 JSON 崩溃。
+                for abort_cmd in (["git", "rebase", "--abort"], ["git", "merge", "--abort"]):
+                    try:
+                        subprocess.run(abort_cmd, cwd=SCRIPT_DIR,
+                                      capture_output=True, text=True, timeout=30)
+                    except Exception:
+                        pass
                 time.sleep(10)
     print("  ❌ git 推送失败（已重试 3 次），网页可能未更新，请检查网络或手动运行。")
     return False
