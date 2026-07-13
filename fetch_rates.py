@@ -177,17 +177,20 @@ def fetch_one(symbol, start_dt, end_dt):
     currency_boc_safe 返回的 美元/日元/港元 列为「每100单位」报价，
     统一在 get_rates_for_range 中除以 100 换算为「每单位」，与历史数据口径一致。
     """
+    # 调用方传入的中文名 → BOC 数据实际列名
+    COL_MAP = {"美元": "美元", "日元": "日元", "港币": "港元"}
+    col = COL_MAP.get(symbol, symbol)
     df = _get_boc_full()
     if df is None:
         return None
-    if symbol not in df.columns:
-        print(f"    ⚠️ 未知币种列: {symbol}")
+    if col not in df.columns:
+        print(f"    ⚠️ 未知币种列: {symbol} (映射列 {col})")
         return None
     mask = (df["日期"] >= pd.Timestamp(start_dt)) & (df["日期"] <= pd.Timestamp(end_dt))
-    sub = df.loc[mask, ["日期", symbol]].copy()
+    sub = df.loc[mask, ["日期", col]].copy()
     if sub.empty:
         return None
-    sub = sub.rename(columns={symbol: "央行中间价"})
+    sub = sub.rename(columns={col: "央行中间价"})
     return sub
 
 
@@ -685,12 +688,13 @@ def git_commit_and_push():
                 subprocess.run(["git", "pull", "--rebase", "origin", "main"],
                               cwd=SCRIPT_DIR, capture_output=True, text=True, timeout=60)
             except subprocess.CalledProcessError:
-                # rebase 产生冲突：以本地(ours)数据/网页文件为准，继续完成 rebase
+                # rebase 产生冲突：rebase 中 "theirs" 才是本次要应用的本地提交，
+                # 故以 --theirs 保留本地(最新数据/脚本)版本，继续完成 rebase
                 try:
                     out = subprocess.run(["git", "diff", "--name-only", "--diff-filter=U"],
                                          cwd=SCRIPT_DIR, capture_output=True, text=True, timeout=20).stdout
                     for f in out.split():
-                        subprocess.run(["git", "checkout", "--ours", f],
+                        subprocess.run(["git", "checkout", "--theirs", f],
                                       cwd=SCRIPT_DIR, capture_output=True, text=True, timeout=20)
                         subprocess.run(["git", "add", f],
                                       cwd=SCRIPT_DIR, capture_output=True, text=True, timeout=20)
