@@ -208,8 +208,13 @@ def get_rates_for_range(symbol, code, start_dt, end_dt):
         val = row["央行中间价"]
         if pd.isna(val):
             continue
-        # BOC 直连为「每100单位」报价，统一 /100 得到「每单位」汇率
-        result[dt.strftime("%Y-%m-%d")] = float(val) / 100.0
+        # 口径约定（与 compute_pairs 对齐）：
+        #  - USD 为「每100单位」报价，此处 /100 → 每单位(USD/CNY)
+        #  - JPY/HKD 为「每100单位」报价，compute_pairs 内会再 /100，此处保持原值
+        if code == "USD":
+            result[dt.strftime("%Y-%m-%d")] = float(val) / 100.0
+        else:
+            result[dt.strftime("%Y-%m-%d")] = float(val)
     return result
 
 
