@@ -152,37 +152,51 @@ def load_existing():
     return None
 
 
-def fetch_one(symbol, start_dt, end_dt):
-    start_str = start_dt.strftime("%Y%m%d")
-    end_str = end_dt.strftime("%Y%m%d")
+_BOC_FULL_CACHE = None
+
+
+def _get_boc_full():
+    """获取 BOC 全量历史汇率（直连 currency_boc_safe，稳定可用）。一次性缓存。"""
+    global _BOC_FULL_CACHE
+    if _BOC_FULL_CACHE is not None:
+        return _BOC_FULL_CACHE
     try:
-        df = ak.currency_boc_sina(symbol=symbol, start_date=start_str, end_date=end_str)
-        if df.empty:
-            return None
-        return df[["日期", "央行中间价"]].copy()
+        df = ak.currency_boc_safe()
+        df["日期"] = pd.to_datetime(df["日期"])
+        df = df.sort_values("日期").reset_index(drop=True)
+        _BOC_FULL_CACHE = df
+        return df
     except Exception as e:
-        print(f"    错误: {e}")
+        print(f"    ⚠️ BOC直连抓取失败: {e}")
         return None
 
 
-def get_rates_for_range(symbol, code, start_dt, end_dt):
-    all_rows = []
-    current = start_dt
-    while current <= end_dt:
-        seg_end = min(current + timedelta(days=365), end_dt)
-        df = fetch_one(symbol, current, seg_end)
-        if df is not None and not df.empty:
-            all_rows.append(df)
-        current = seg_end + timedelta(days=1)
+def fetch_one(symbol, start_dt, end_dt):
+    """从 BOC 全量数据中截取指定区间的某币种报价。
 
-    if not all_rows:
+    currency_boc_safe 返回的 美元/日元/港元 列为「每100单位」报价，
+    统一在 get_rates_for_range 中除以 100 换算为「每单位」，与历史数据口径一致。
+    """
+    df = _get_boc_full()
+    if df is None:
+        return None
+    if symbol not in df.columns:
+        print(f"    ⚠️ 未知币种列: {symbol}")
+        return None
+    mask = (df["日期"] >= pd.Timestamp(start_dt)) & (df["日期"] <= pd.Timestamp(end_dt))
+    sub = df.loc[mask, ["日期", symbol]].copy()
+    if sub.empty:
+        return None
+    sub = sub.rename(columns={symbol: "央行中间价"})
+    return sub
+
+
+def get_rates_for_range(symbol, code, start_dt, end_dt):
+    df = fetch_one(symbol, start_dt, end_dt)
+    if df is None or df.empty:
         return {}
 
-    combined = pd.concat(all_rows, ignore_index=True)
-    combined["日期"] = pd.to_datetime(combined["日期"])
-    combined = combined.drop_duplicates(subset=["日期"])
-    combined = combined.sort_values("日期")
-
+    combined = df.drop_duplicates(subset=["日期"]).sort_values("日期")
     result = {}
     for _, row in combined.iterrows():
         dt = row["日期"]
@@ -191,14 +205,8 @@ def get_rates_for_range(symbol, code, start_dt, end_dt):
         val = row["央行中间价"]
         if pd.isna(val):
             continue
-        ds = dt.strftime("%Y-%m-%d")
-        val = float(val)
-        if code == "USD":
-            result[ds] = val / 100.0
-        elif code == "JPY":
-            result[ds] = val
-        elif code == "HKD":
-            result[ds] = val
+        # BOC 直连为「每100单位」报价，统一 /100 得到「每单位」汇率
+        result[dt.strftime("%Y-%m-%d")] = float(val) / 100.0
     return result
 
 
@@ -651,7 +659,7 @@ def git_commit_and_push():
         print(f"  ⚠️ git status 检查失败: {e}")
         return False
 
-    max_retries = 3
+    max_retries = 5
     for attempt in range(1, max_retries + 1):
         try:
             subprocess.run(["git", "add", "-A"], cwd=SCRIPT_DIR,
@@ -670,27 +678,36 @@ def git_commit_and_push():
                            check=True, capture_output=True, text=True, timeout=60)
             print(f"  ✅ 代码已推送至 GitHub (第 {attempt} 次尝试)")
             return True
-        except subprocess.CalledProcessError as e:
-            print(f"  ⚠️ git 操作失败 (第 {attempt}/{max_retries} 次): {e}")
-            if attempt < max_retries:
-                # 若远程有新提交，尝试 rebase 同步
+        except subprocess.CalledProcessError:
+            print(f"  ⚠️ git 推送失败 (第 {attempt}/{max_retries} 次)，尝试 rebase 同步远程...")
+            try:
+                # 拉取并以 rebase 方式接到远程最新之上
+                subprocess.run(["git", "pull", "--rebase", "origin", "main"],
+                              cwd=SCRIPT_DIR, capture_output=True, text=True, timeout=60)
+            except subprocess.CalledProcessError:
+                # rebase 产生冲突：以本地(ours)数据/网页文件为准，继续完成 rebase
                 try:
-                    subprocess.run(["git", "pull", "--rebase", "origin", "main"],
-                                  cwd=SCRIPT_DIR, capture_output=True, text=True, timeout=60)
-                except Exception:
-                    pass
-                # 无论 rebase 是否因自动生成的数据文件(data/rates.json)冲突而中断，
-                # 都必须清理进行中的 rebase/merge 状态，否则仓库会卡死、
-                # 工作区残留冲突标记，导致下次运行 load_existing() 解析 JSON 崩溃。
-                for abort_cmd in (["git", "rebase", "--abort"], ["git", "merge", "--abort"]):
-                    try:
-                        subprocess.run(abort_cmd, cwd=SCRIPT_DIR,
-                                      capture_output=True, text=True, timeout=30)
-                    except Exception:
-                        pass
-                time.sleep(10)
-    print("  ❌ git 推送失败（已重试 3 次），网页可能未更新，请检查网络或手动运行。")
-    return False
+                    out = subprocess.run(["git", "diff", "--name-only", "--diff-filter=U"],
+                                         cwd=SCRIPT_DIR, capture_output=True, text=True, timeout=20).stdout
+                    for f in out.split():
+                        subprocess.run(["git", "checkout", "--ours", f],
+                                      cwd=SCRIPT_DIR, capture_output=True, text=True, timeout=20)
+                        subprocess.run(["git", "add", f],
+                                      cwd=SCRIPT_DIR, capture_output=True, text=True, timeout=20)
+                    subprocess.run(["git", "rebase", "--continue"],
+                                  cwd=SCRIPT_DIR, capture_output=True, text=True, timeout=30)
+                except Exception as re:
+                    print(f"    rebase 冲突解决失败: {re}")
+            time.sleep(5)
+    # 兜底：仍失败则以本地最新数据为准强制推送（保留本地真实数据，避免网页停更）
+    try:
+        subprocess.run(["git", "push", "--force-with-lease", "origin", "main"],
+                      cwd=SCRIPT_DIR, check=True, capture_output=True, text=True, timeout=60)
+        print("  ✅ 已以本地为准强制(lease)推送，网页将更新到最新本地数据")
+        return True
+    except Exception as e:
+        print(f"  ❌ git 推送最终失败: {e}")
+        return False
 
 
 def save_and_generate(result):
