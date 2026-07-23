@@ -42,6 +42,13 @@
 - 数据日期 2026-07-20（当天周一最新交易日），三处同步，自动更新正常。
 - 判定：网站正常且与仓库同步，无需任何修改操作（未执行 git/部署/文件改动）。
 
+## 2026-07-23 23:00(注:实际触发于 08:21,时间偏差)
+- 三处 end_date 完全一致：仓库源(raw)=2026-07-22、github.io(301→ex.hplcx.com)=2026-07-22、ex.hplcx.com(http 301→https)=2026-07-22。
+- GitHub 状态：Git/Webhooks/API/Actions/Pages 全部 operational。
+- GitHub Pages API 仍无法直接认证（无 GITHUB_TOKEN、gh 不可用，无认证返回 404）；以"线上==仓库源且日期一致"作间接判定，Pages 未 errored、已正常部署。
+- 数据日期 2026-07-22（仓库已提交的最新数据），三处同步，自动更新正常。
+- 判定：网站正常且与仓库同步，无需任何修改操作（未执行 git/部署/文件改动）。
+
 ## 排查备注
 - `github.io/fx-tracker/` 会 301 重定向到 `ex.hplcx.com/`（自定义域名），两处内容相同；抓取时需加 `-L` 跟随重定向。
 - GitHub Pages REST API（/repos/.../pages）需认证，本环境无 token 时返回 404，不可用；以此情形下"线上==仓库源"作为 Pages 未 errored 的间接证据。
