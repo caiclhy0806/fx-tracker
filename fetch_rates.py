@@ -743,6 +743,11 @@ def save_and_generate(result):
     result["meta"]["version"] = version_str
     result["meta"]["generated_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
+    # 始终基于 daily 重算月/年统计，确保新增货币对(如 USD/JPY)也包含月度/年度对比数据。
+    # 避免「数据已最新 / 无新数据」分支遗漏 calc_stats 导致部分币种缺月/年数据。
+    if "daily" in result:
+        _, result["monthly"], result["yearly"], _ = calc_stats(result["daily"])
+
     os.makedirs(DATA_DIR, exist_ok=True)
     with open(OUTPUT_JSON, "w", encoding="utf-8") as f:
         json.dump(result, f, ensure_ascii=False, indent=2)
