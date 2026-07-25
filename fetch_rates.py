@@ -44,6 +44,7 @@ PAIR_LABELS = {
     "HKD/CNY": "港币兑人民币",
     "HKD/JPY": "港币兑日元",
     "JPY/HKD": "日元兑港币",
+    "USD/JPY": "美元兑日元",
 }
 
 # ---------- 版本 & 更新日志 ----------
@@ -224,7 +225,7 @@ def compute_pairs(usd_rates, jpy_rates, hkd_rates):
         all_dates.update(d.keys())
     all_dates = sorted(all_dates)
 
-    daily = {p: {} for p in ["USD/CNY", "JPY/CNY", "HKD/CNY", "HKD/JPY", "JPY/HKD"]}
+    daily = {p: {} for p in ["USD/CNY", "JPY/CNY", "HKD/CNY", "HKD/JPY", "JPY/HKD", "USD/JPY"]}
 
     for ds in all_dates:
         u = usd_rates.get(ds)
@@ -241,8 +242,22 @@ def compute_pairs(usd_rates, jpy_rates, hkd_rates):
         daily["HKD/CNY"][ds] = round(hkd_cny, 6)
         daily["HKD/JPY"][ds] = round(hkd_cny / jpy_cny, 6)
         daily["JPY/HKD"][ds] = round(jpy_cny / hkd_cny, 6)
+        daily["USD/JPY"][ds] = round(u / jpy_cny, 6)
 
     return daily
+
+
+def _recompute_daily_from_existing(existing):
+    """从已有 rates.json 的 daily 反推原始每单位/每100单位报价，重算所有货币对（含新增的 USD/JPY）。
+
+    用于「数据已是最新 / 无新数据」等快捷分支，确保新增的派生货币对也会补齐进网页，
+    而不依赖重新抓取数据源。
+    """
+    d = existing["daily"]
+    new_usd = {ds: float(d["USD/CNY"][ds]) for ds in d["USD/CNY"]}
+    new_jpy = {ds: float(d["JPY/CNY"][ds]) * 100.0 for ds in d["JPY/CNY"]}
+    new_hkd = {ds: float(d["HKD/CNY"][ds]) * 100.0 for ds in d["HKD/CNY"]}
+    return compute_pairs(new_usd, new_jpy, new_hkd)
 
 
 def calc_stats(daily):
@@ -820,11 +835,15 @@ def run_incremental():
     today_dt = datetime.today()
     if last_dt.date() >= today_dt.date():
         print(f"数据已是最新，重新计算预警并生成网页...")
-        # 重新计算预警（即使数据没变）
-        alerts = calc_alerts(existing["daily"])
-        existing["alerts"] = alerts
-        existing["meta"]["generated_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        save_and_generate(existing)
+        # 重新计算所有货币对（确保新增的 USD/JPY 等派生对已补齐），再算预警
+        daily = _recompute_daily_from_existing(existing)
+        alerts = calc_alerts(daily)
+        result = dict(existing)
+        result["daily"] = daily
+        result["alerts"] = alerts
+        result["meta"]["generated_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        result["meta"]["pairs"] = list(daily.keys())
+        save_and_generate(result)
         return
 
     fetch_start = last_dt + timedelta(days=1)
@@ -852,10 +871,14 @@ def run_incremental():
 
     if not usd_rates and not jpy_rates and not hkd_rates:
         print("  期间无新数据，重新计算预警并生成网页...")
-        alerts = calc_alerts(existing["daily"])
-        existing["alerts"] = alerts
-        existing["meta"]["generated_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        save_and_generate(existing)
+        daily = _recompute_daily_from_existing(existing)
+        alerts = calc_alerts(daily)
+        result = dict(existing)
+        result["daily"] = daily
+        result["alerts"] = alerts
+        result["meta"]["generated_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        result["meta"]["pairs"] = list(daily.keys())
+        save_and_generate(result)
         return
 
     new_usd = {ds: float(existing["daily"]["USD/CNY"][ds])
@@ -1107,6 +1130,7 @@ var ACCESS_KEY = "cl2026";
       <option value="HKD/CNY">港币 / 人民币 (HKD/CNY)</option>
       <option value="HKD/JPY">港币 / 日元 (HKD/JPY)</option>
       <option value="JPY/HKD">日元 / 港币 (JPY/HKD)</option>
+      <option value="USD/JPY">美元 / 日元 (USD/JPY)</option>
     </select>
 
     <label>视图：</label>
@@ -1160,7 +1184,8 @@ var PAIR_LABELS = {
   "JPY/CNY": "日元兑人民币",
   "HKD/CNY": "港币兑人民币",
   "HKD/JPY": "港币兑日元",
-  "JPY/HKD": "日元兑港币"
+  "JPY/HKD": "日元兑港币",
+  "USD/JPY": "美元兑日元"
 };
 
 (function init() {
