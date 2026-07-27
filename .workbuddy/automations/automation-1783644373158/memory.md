@@ -62,6 +62,16 @@
 - 结论：站点停在 07-23，比今日 07-24 少 1 天，但极可能为「10:00 监控早于 ~10:20 自动提交」的时序错位；数据源健康、部署链路一致、GitHub 全 operational。建议 ~10:40 复检，若网站更新至 07-24 则无需操作；若仍停 07-23 则今日抓取未捕获当日数据，需补救（手动抓取+推送 或 调度后移/增加重试断言）。
 - 处置：按铁律仅诊断+报告，未做任何修改（未 git/推送/部署/改文件/改脚本）。已向用户报告并等待授权。
 
+## 2026-07-27 09:52 (GMT+8) — 执行结果：待复检（大概率时序错位）+ 数据源探测告警（本环境 SSL 不通）
+- 数据源 currency_boc_safe（抓 www.safe.gov.cn）：**本环境探测失败**，SSLError UNEXPECTED_EOF / curl 到 www.safe.gov.cn 返回 http_code=000 SSL_ERROR_SYSCALL，重试 2 次均失败。通用网络正常（api.github.com=200），故为「本机到 safe.gov.cn 的 TLS/网络受阻」，非全网数据源宕机。
+- 备用源 currency_boc_sina：正常，确认今日 2026-07-27 数据已存在（USD 676.17）→ 现实世界今日牌价已发布。**注意**：生产抓取的 GitHub Action 在 GitHub 美国 runner 上跑 currency_boc_safe，不受本机 SSL 影响，故本机探测失败≠生产管线失败，但需关注若 runner 也不通则今日更新会失败。
+- 三处 end_date 校验：仓库 raw(main)=2026-07-24；github.io=2026-07-24；线上 ex.hplcx.com=2026-07-24。**三者完全一致** → 部署/同步链路健康。今日周一，07-25/26 为周末无新牌价，站点停在上周五 07-24。
+- GitHub Status：Git/Webhooks/API/Issues/PRs/Actions/Packages/Pages/Copilot/Codespaces 全 operational。
+- 提交历史：最新自动更新提交 2026-07-26T09:29:07Z「自动更新: 2026-07-26」；**今日 2026-07-27 暂无提交**。按历史 9:30 Action 常延迟至 ~10:20 北京时间落地，09:52 探查时今日提交未生成属预期时序。
+- GitHub Pages API：GITHUB_TOKEN 仍未设置（401 Bad credentials），无法程序化核验 build。
+- 结论：站点停在 07-24，今日 07-27 数据（sina 已确认存在）预计随今日 9:30 Action(~10:20)刷新；建议 ~10:40 复检。另外本环境已无法用 currency_boc_safe 直连探测，建议监控脚本探测环节回退/兼容 currency_boc_sina。
+- 处置：按铁律仅诊断+报告，未做任何修改。等待用户授权。
+
 ## 历史备注
 - ex.hplcx.com 经 HTTP 访问返回 301，需 `-L` 跟随跳转到 https 才是真实页面（162B 跳转桩 vs 201560B 真实页）。
 - 本地工作区 index.html 与 data/ 仅含 2026-07-10 数据，与线上一致。
