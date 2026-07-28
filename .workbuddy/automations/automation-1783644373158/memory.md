@@ -72,6 +72,16 @@
 - 结论：站点停在 07-24，今日 07-27 数据（sina 已确认存在）预计随今日 9:30 Action(~10:20)刷新；建议 ~10:40 复检。另外本环境已无法用 currency_boc_safe 直连探测，建议监控脚本探测环节回退/兼容 currency_boc_sina。
 - 处置：按铁律仅诊断+报告，未做任何修改。等待用户授权。
 
+## 2026-07-28 09:52 (GMT+8) — 执行结果：待复检（时序错位）+ SAFE 源持续不可达告警（连续第 2 天）
+
+- 数据源 currency_boc_safe（www.safe.gov.cn）：**本机探测再次 SSL 失败**（UNEXPECTED_EOF，curl http_code=000），与 07-27 同模式，连续第 2 天。通用网络正常，属本机/线路到 safe.gov.cn 的 TLS 受阻。
+- 备用源 currency_boc_sina：正常，**今日 2026-07-28 数据已发布**（USD 汇买价 675.44）→ 现实世界牌价已就绪。
+- 三处 end_date 校验：仓库 raw(main)=2026-07-27；github.io=2026-07-27；线上 ex.hplcx.com=2026-07-27。**三者完全一致** → 部署/同步链路健康。
+- GitHub Status：Git/Webhooks/API/Issues/PRs/Actions/Packages/Pages 全部 operational。Pages API 仍 401（无 GITHUB_TOKEN）。
+- 提交历史：最新 2026-07-27T12:45Z「自动更新」；**关键发现**：07-27 存在人工回填提交「data: 回填 2026-07-27 汇率（SAFE 暂不可达，改用 BOC 中行折算价）」→ 说明 GitHub runner 侧的 SAFE 抓取昨日也失败过，SAFE 不可达并非仅本机问题，今日 9:30 Action 有再次失败风险。今日 07-28 暂无提交（09:52 探查早于历史落地时间 ~10:20-12:45，属预期）。
+- 结论：站点停在 07-27，差 1 天，大概率时序错位；但叠加 SAFE 源连续不可达风险，建议 ~10:40-11:00 复检；若届时仍停 07-27，则需按昨日模式回填（sina/BOC 备用源）或将 fetch 脚本增加备用源回退逻辑（待授权）。
+- 处置：按铁律仅诊断+报告，未做任何修改。等待用户授权。
+
 ## 历史备注
 - ex.hplcx.com 经 HTTP 访问返回 301，需 `-L` 跟随跳转到 https 才是真实页面（162B 跳转桩 vs 201560B 真实页）。
 - 本地工作区 index.html 与 data/ 仅含 2026-07-10 数据，与线上一致。
