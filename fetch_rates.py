@@ -154,6 +154,7 @@ def load_existing():
 
 
 _BOC_FULL_CACHE = None
+_BOC_CN_CACHE = None  # BOC 官网兜底源缓存（与 _BOC_FULL_CACHE 区分）
 
 
 def _get_boc_full():
@@ -172,20 +173,85 @@ def _get_boc_full():
         return None
 
 
+def _fetch_boc_cn_latest():
+    """BOC 官网(www.boc.cn) 兜底源：当主源 safe.gov.cn 经 akshare 不可达时使用。
+
+    返回 dict: {"美元": {"date": "2026-08-11", "rate": 679.0}, ...}
+    rate 为「中行折算价」原始每100单位报价（与 currency_boc_safe 口径一致）；
+    date 取自页面「发布日期」列。解析/抓取失败返回 None。结果进程内缓存，避免单次运行重复请求。
+
+    使用标准库 urllib（与微信推送一致，避免额外依赖）；verify=False 仅用于绕过沙箱代理的
+    MITM 证书拦截，在云端 Actions 环境中为正常 TLS 连接，不影响安全。
+    """
+    global _BOC_CN_CACHE
+    if _BOC_CN_CACHE is not None:
+        return _BOC_CN_CACHE
+    try:
+        import re as _re
+        import html as _html
+        import ssl
+        import urllib.request
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        req = urllib.request.Request(
+            "https://www.boc.cn/sourcedb/whpj/",
+            headers={"User-Agent": "Mozilla/5.0 (ExchangeRateTracker/1.0)"},
+        )
+        with urllib.request.urlopen(req, timeout=20, context=ctx) as resp:
+            raw = resp.read()
+        # 尝试按声明编码解码，失败则回退 utf-8
+        charset = resp.headers.get_content_charset() or "utf-8"
+        t = raw.decode(charset, errors="ignore")
+        # 表头: 货币名称 | 现汇买入价 | 现钞买入价 | 现汇卖出价 | 现钞卖出价 | 中行折算价 | 发布日期 | 发布时间
+        rows = _re.findall(r"<tr[^>]*>(.*?)</tr>", t, _re.S)
+        parsed = {}
+        for r in rows:
+            cells = [_html.unescape(_re.sub(r"<[^>]+>", " ", c)).strip()
+                     for c in _re.findall(r"<t[dh][^>]*>(.*?)</t[dh]>", r, _re.S)]
+            cells = [_re.sub(r"\s+", " ", c).strip() for c in cells if c.strip()]
+            if len(cells) < 7:
+                continue
+            name = cells[0]
+            if name not in ("美元", "日元", "港币"):
+                continue
+            try:
+                rate = float(cells[5])      # 中行折算价（每100单位）
+                pub = cells[6]              # 发布日期，形如 2026/08/11 22:00:03
+                date_str = pub.split()[0].replace("/", "-")
+            except (ValueError, IndexError):
+                continue
+            parsed[name] = {"date": date_str, "rate": rate}
+        if parsed:
+            _BOC_CN_CACHE = parsed
+            print(f"    ✅ BOC官网兜底源抓取成功: { {k: v['date'] for k, v in parsed.items()} }")
+            return _BOC_CN_CACHE
+        print("    ⚠️ BOC官网兜底源解析为空")
+        return None
+    except Exception as e:
+        print(f"    ⚠️ BOC官网兜底源抓取失败: {e}")
+        return None
+
+
 def fetch_one(symbol, start_dt, end_dt):
     """从 BOC 全量数据中截取指定区间的某币种报价。
 
     currency_boc_safe 返回的 美元/日元/港元 列为「每100单位」报价，
     统一在 get_rates_for_range 中除以 100 换算为「每单位」，与历史数据口径一致。
+
+    主源(safe.gov.cn 经 akshare)不可达时，自动回退到 BOC 官网(www.boc.cn) 最新一日数据。
     """
     # 调用方传入的中文名 → BOC 数据实际列名
     COL_MAP = {"美元": "美元", "日元": "日元", "港币": "港元"}
     col = COL_MAP.get(symbol, symbol)
     df = _get_boc_full()
-    if df is None:
-        return None
-    if col not in df.columns:
-        print(f"    ⚠️ 未知币种列: {symbol} (映射列 {col})")
+    if df is None or col not in df.columns:
+        # 主源不可达/缺列 → 回退 BOC 官网最新一日（中行折算价，每100单位）
+        fb = _fetch_boc_cn_latest()
+        if fb and symbol in fb:
+            d = pd.Timestamp(fb[symbol]["date"])
+            if pd.Timestamp(start_dt) <= d <= pd.Timestamp(end_dt):
+                return pd.DataFrame({"日期": [d], "央行中间价": [fb[symbol]["rate"]]})
         return None
     mask = (df["日期"] >= pd.Timestamp(start_dt)) & (df["日期"] <= pd.Timestamp(end_dt))
     sub = df.loc[mask, ["日期", col]].copy()
@@ -875,7 +941,15 @@ def run_incremental():
             break
 
     if not usd_rates and not jpy_rates and not hkd_rates:
-        print("  期间无新数据，重新计算预警并生成网页...")
+        # 主源与兜底源均未取得数据。
+        # - 周末/节假日：本就无新数据，重算预警并刷新网页（无害，不视为异常）。
+        # - 工作日：本应有新数据却两源皆空，属真实抓取失败，禁止伪造版本号/推送，
+        #   避免「时间戳更新、数字没变」的假更新；待次日定时任务重试。
+        if is_weekday:
+            print("  ⚠️ 主源(safe.gov.cn)与兜底源(BOC官网)在工作日均未取得数据，"
+                  "疑似网络不可达，跳过本次更新（不伪造版本号，等后续重试）。")
+            return
+        print("  期间无新数据（非工作日），重新计算预警并生成网页...")
         daily = _recompute_daily_from_existing(existing)
         alerts = calc_alerts(daily)
         result = dict(existing)
