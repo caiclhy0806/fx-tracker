@@ -1,5 +1,16 @@
 # 汇率网页监控自动化 - 执行记录
 
+## 2026-08-29 10:29 (GMT+8) — 执行结果：正常（网站已同步至最新可用数据）
+
+- 数据源 currency_boc_safe：**健康**，最新=2026-08-28（周五，上一交易日），8037 行。今日为 2026-08-29 周六（非工作日），BOC 不发布牌价，无当日数据待抓取，"数据源滞后"判定不成立。
+- 三处 end_date 校验：raw.githubusercontent.com/main = **http_code=000 本机不可达**（连续复检仍未恢复，属本机到 raw.githubusercontent.com 的网络受阻，与可访问的 github.io/api.github.com 形成对照）；caiclhy0806.github.io/fx-tracker = 2026-08-28；ex.hplcx.com = 2026-08-28（http 200、249120B、Ver1.65、全页 16 次 2026-08-28）。**github.io 与线上自定义域名两者完全一致** → 部署/同步链路健康，且均同步到最新可用数据 2026-08-28。
+- GitHub Status：Git/Webhooks/API/Actions/Pages 全部 operational。
+- GitHub Pages API：GITHUB_TOKEN 仍未设置（本环境无 token、gh CLI 亦不可用），无法程序化核验 build 状态；页面层+链接层证据足以判定部署健康。
+- 结论：**正常**。网站已更新到最新可用数据日期 2026-08-28（今日周六无牌价发布），数据源健康、部署/同步链路一致、GitHub 全 operational，无需任何操作。唯一局限：raw main 本机不可达 + Pages API 无 token 无法直连核验，但两个权威已部署端点一致且数据正确，足以判定健康。
+- 处置：按铁律仅诊断+报告，未做任何修改（未 git/推送/部署/改文件/改脚本）。
+
+
+
 ## 2026-08-19 09:50 (GMT+8) — 执行结果：待复检（时序错位，已由 Actions 记录证实，非故障）
 
 - 数据源 currency_boc_safe：**健康**，最新=2026-08-19=今日（周三，交易日），8030 行，SSL 直连正常。今日牌价已就绪（USD 678.54）。
