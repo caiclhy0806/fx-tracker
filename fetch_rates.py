@@ -801,9 +801,8 @@ def git_commit_and_push():
 
 
 def save_and_generate(result):
-    # 读取当前版本（用于本次构建），然后递增存回（供下次使用）
-    version_str = read_version_str()
-    bump_version()
+    # 先递增版本号，使内容版本与 version.txt 保持一致（避免二者长期偏移 1）
+    version_str = bump_version()
     update_logs = record_update(version_str)
 
     result["meta"]["version"] = version_str
