@@ -100,3 +100,27 @@
 - GitHub Pages REST API（/repos/.../pages）需认证，本环境无 token 时返回 404，不可用；以此情形下"线上==仓库源"作为 Pages 未 errored 的间接证据。
 - curl 直连 `githubstatus.com` 偶发 http=000（连接失败），此时改用网页抓取方式获取同一 JSON 即可；`raw.githubusercontent.com` 也偶发超时，重试一次通常成功。不要把这类网络抖动误判为站点故障。
 - 推荐校验手法：除比对 end_date，再对三处 index.html 做 md5 比对，一致即证明部署无滞后。
+
+## 2026-10-15 23:57
+- 三处 end_date 完全一致：仓库源(raw)=2026-10-15、github.io(301→ex.hplcx.com)=2026-10-15、ex.hplcx.com(http 301→https)=2026-10-15。
+- 强校验：三处 index.html 全文 md5 完全相同（06ab0d555565837c9d36cd01f836bf99），字节级一致。
+- GitHub 状态：Actions/Pages 全部 operational。
+- GitHub Pages API 仍无法认证（无 GITHUB_TOKEN/GH_TOKEN、gh 不可用，未认证 404）；以"线上==仓库源字节一致 + 官方状态正常"作 Pages 未 errored 的间接判定。
+- 数据日期 2026-10-15（当天周四最新交易日），三处同步，自动更新正常。
+- 判定：网站正常且与仓库同步，无需任何修改操作（未执行 git/部署/文件改动）。
+
+## 2026-10-20 23:16
+- 三处 end_date 完全一致：仓库源(raw)=2026-10-20、github.io(301→ex.hplcx.com)=2026-10-20、ex.hplcx.com(http 301→https)=2026-10-20。
+- 强校验：三处 index.html 全文 md5 完全相同（e3f152c19181647af4ec460c5ac18b8a，258428 字节），字节级一致。
+- GitHub 状态：Git/Webhooks/API/Actions/Pages 全部 operational。
+- GitHub Pages API 仍无法认证（无 GITHUB_TOKEN/GH_TOKEN、gh 不可用，未认证 404）；以"线上==仓库源字节一致 + 官方状态正常"作 Pages 未 errored 的间接判定。
+- 数据日期 2026-10-20（当天周二最新交易日），三处同步，自动更新正常。
+- 判定：网站正常且与仓库同步，无需任何修改操作（未执行 git/部署/文件改动）。
+
+## 2026-10-22 23:03
+- 三处 end_date 完全一致：仓库源(raw)=2026-10-22、github.io(301→ex.hplcx.com)=2026-10-22、ex.hplcx.com(http 301→https)=2026-10-22。
+- 强校验：三处 index.html 全文 md5 完全相同（2cc9f0f2466368bbfce0a4c67fe9319d，258727 字节），字节级一致。
+- GitHub 状态：Actions/Pages 全部 operational。
+- GitHub Pages API 仍无法认证（无 GITHUB_TOKEN/GH_TOKEN、gh 不可用，未认证 404）；以"线上==仓库源字节一致 + 官方状态正常"作 Pages 未 errored 的间接判定。
+- 数据日期 2026-10-22（当天周四最新交易日），三处同步，自动更新正常。
+- 判定：网站正常且与仓库同步，无需任何修改操作（未执行 git/部署/文件改动）。
