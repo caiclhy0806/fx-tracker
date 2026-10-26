@@ -732,67 +732,135 @@ def send_wechat_if_needed(alerts):
         print(f"  ❌ 微信发送失败: {e}")
 
 
-def git_commit_and_push():
-    """将本次生成的所有文件提交并推送到 GitHub（带重试与冲突自动 rebase）。
+def _safe_git(args, timeout=60):
+    """运行 git 子命令，返回 CompletedProcess；不抛异常。"""
+    return subprocess.run(["git", *args], cwd=SCRIPT_DIR,
+                          capture_output=True, text=True, timeout=timeout)
 
-    返回 True 表示推送成功（或本就无改动），False 表示重试后仍失败。
-    关键：网页更新与邮件通知必须在同一次脚本运行中完成，避免“邮件发了但网页没更”的问题。
-    """
-    try:
-        st = subprocess.run(["git", "status", "--porcelain"],
-                            cwd=SCRIPT_DIR, capture_output=True, text=True, timeout=20)
-        if not st.stdout.strip():
-            print("  ℹ️ 无文件改动，跳过 git 提交")
-            return True
-    except Exception as e:
-        print(f"  ⚠️ git status 检查失败: {e}")
+
+def _cleanup_rebase_state():
+    """若仓库处于悬挂的 rebase 状态（本脚本或上次中断遗留），先中止，避免状态污染。"""
+    gitd = _safe_git(["rev-parse", "--git-dir"]).stdout.strip()
+    if not gitd:
         return False
+    for sub in ("rebase-merge", "rebase-apply"):
+        if os.path.exists(os.path.join(gitd, sub)):
+            _safe_git(["rebase", "--abort"])
+            print("  ℹ️ 检测到悬挂的 rebase，已自动中止")
+            return True
+    return False
+
+
+def notify_missed_update():
+    """工作日自动抓取失败（主源+兜底源皆空）时发送告警，避免静默漏更。
+
+    复用邮件/微信通道；未配置文件时优雅跳过，不抛异常。
+    """
+    ts = datetime.now().strftime("%Y-%m-%d %H:%M")
+    text = (f"汇率自动更新未取到数据（{ts}）\n"
+            f"今日定时任务已运行，但主源(safe.gov.cn)与兜底源(中行官网)均未取得数据，"
+            f"本次未更新网页。若为网络波动，将待后续定时波次重试；若连续多日请检查数据源连通性。")
+    md = (f"## ⚠️ 汇率自动更新漏更告警\n"
+          f"> 时间：{ts}\n"
+          f"> 主源(safe.gov.cn)与兜底源(中行官网)今日均未取到数据，网页未更新。"
+          f"若为网络波动将自动重试；若持续请排查数据源。")
+
+    # 邮件通道
+    if os.path.exists(EMAIL_CONFIG):
+        try:
+            import smtplib
+            from email.mime.text import MIMEText
+            with open(EMAIL_CONFIG, "r", encoding="utf-8") as f:
+                cfg = json.load(f)
+            msg = MIMEText(text, "plain", "utf-8")
+            msg["From"] = cfg["sender"]
+            msg["To"] = ", ".join(cfg["recipients"])
+            msg["Subject"] = "⚠️ 汇率自动更新漏更告警"
+            if cfg.get("smtp_port") == 465:
+                srv = smtplib.SMTP_SSL(cfg["smtp_host"], cfg["smtp_port"], timeout=15)
+            else:
+                srv = smtplib.SMTP(cfg["smtp_host"], cfg["smtp_port"], timeout=15)
+                srv.starttls()
+            srv.login(cfg["sender"], cfg["password"])
+            srv.sendmail(cfg["sender"], cfg["recipients"], msg.as_string())
+            srv.quit()
+            print("  📧 漏更告警邮件已发送")
+        except Exception as e:
+            print(f"  ⚠️ 漏更告警邮件发送失败: {e}")
+    else:
+        print("  ℹ️ 未配置邮件，跳过漏更邮件告警")
+
+    # 微信通道
+    try:
+        cfg = load_wechat_config()
+        if cfg and cfg.get("webhook_url"):
+            import urllib.request
+            payload = {"msgtype": "markdown", "markdown": {"content": md}}
+            data = json.dumps(payload).encode("utf-8")
+            req = urllib.request.Request(cfg["webhook_url"], data=data,
+                                         headers={"Content-Type": "application/json"})
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                r = json.loads(resp.read().decode("utf-8"))
+                if r.get("errcode") == 0:
+                    print("  📱 漏更告警微信已发送")
+                else:
+                    print(f"  ⚠️ 漏更告警微信发送失败: {r.get('errmsg')}")
+        else:
+            print("  ℹ️ 未配置微信，跳过漏更微信告警")
+    except Exception as e:
+        print(f"  ⚠️ 漏更告警微信发送失败: {e}")
+
+
+# 本次运行新生成、需在 reset 后保留的关键产物
+_GEN_FILES = [OUTPUT_JSON, OUTPUT_HTML, VERSION_FILE, UPDATE_LOG]
+
+
+def git_commit_and_push():
+    """将本次生成的所有文件提交并推送到 GitHub。
+
+    设计目标：绝不留下悬挂的 interactive rebase（历史雷区）。
+    策略：本地永远先 reset --hard 到 origin/main（远程即真相源），
+    再把本次新生成的数据文件还原回去，然后快进式提交+推送。
+    由于先与远程对齐，push 一定是 fast-forward，无需 rebase，也就不会卡死。
+    """
+    # 0) 清理可能残留的悬挂 rebase（自身或历史遗留）
+    _cleanup_rebase_state()
+
+    # 1) 备份本次新生成的关键文件（reset 会覆盖，需先存起来）
+    backup = {}
+    for f in _GEN_FILES:
+        if os.path.exists(f):
+            with open(f, "rb") as fh:
+                backup[f] = fh.read()
 
     max_retries = 5
     for attempt in range(1, max_retries + 1):
+        # 2) 与远程对齐：fetch + reset --hard（本地永远以远程为基准）
+        _safe_git(["fetch", "origin", "main"])
+        _safe_git(["reset", "--hard", "origin/main"])
+        # 3) 还原本次新生成的数据
+        for f, data in backup.items():
+            with open(f, "wb") as fh:
+                fh.write(data)
+
+        # 4) 提交并推送
+        st = _safe_git(["status", "--porcelain"])
+        if not st.stdout.strip():
+            print("  ℹ️ 无文件改动，跳过 git 提交")
+            return True
+        _safe_git(["add", "-A"])
+        ts = datetime.now().strftime("%Y-%m-%d %H:%M")
+        _safe_git(["commit", "-m", f"自动更新: {ts}"])
         try:
-            subprocess.run(["git", "add", "-A"], cwd=SCRIPT_DIR,
-                           check=True, capture_output=True, text=True, timeout=30)
-            # 仅当有暂存改动时才提交（rebase 后改动可能已处于已提交状态）
-            diff = subprocess.run(["git", "diff", "--cached", "--quiet"],
-                                  cwd=SCRIPT_DIR, capture_output=True, text=True, timeout=20)
-            if diff.returncode != 0:
-                ts = datetime.now().strftime("%Y-%m-%d %H:%M")
-                msg = f"自动更新: {ts}"
-                subprocess.run(["git", "commit", "-m", msg], cwd=SCRIPT_DIR,
-                               check=True, capture_output=True, text=True, timeout=30)
-            else:
-                print("  ℹ️ 改动已在之前提交，跳过重复提交")
-            subprocess.run(["git", "push", "origin", "main"], cwd=SCRIPT_DIR,
-                           check=True, capture_output=True, text=True, timeout=60)
+            _safe_git(["push", "origin", "main"], timeout=60)
             print(f"  ✅ 代码已推送至 GitHub (第 {attempt} 次尝试)")
             return True
         except subprocess.CalledProcessError:
-            print(f"  ⚠️ git 推送失败 (第 {attempt}/{max_retries} 次)，尝试 rebase 同步远程...")
-            try:
-                # 拉取并以 rebase 方式接到远程最新之上
-                subprocess.run(["git", "pull", "--rebase", "origin", "main"],
-                              cwd=SCRIPT_DIR, capture_output=True, text=True, timeout=60)
-            except subprocess.CalledProcessError:
-                # rebase 产生冲突：rebase 中 "theirs" 才是本次要应用的本地提交，
-                # 故以 --theirs 保留本地(最新数据/脚本)版本，继续完成 rebase
-                try:
-                    out = subprocess.run(["git", "diff", "--name-only", "--diff-filter=U"],
-                                         cwd=SCRIPT_DIR, capture_output=True, text=True, timeout=20).stdout
-                    for f in out.split():
-                        subprocess.run(["git", "checkout", "--theirs", f],
-                                      cwd=SCRIPT_DIR, capture_output=True, text=True, timeout=20)
-                        subprocess.run(["git", "add", f],
-                                      cwd=SCRIPT_DIR, capture_output=True, text=True, timeout=20)
-                    subprocess.run(["git", "rebase", "--continue"],
-                                  cwd=SCRIPT_DIR, capture_output=True, text=True, timeout=30)
-                except Exception as re:
-                    print(f"    rebase 冲突解决失败: {re}")
-            time.sleep(5)
-    # 兜底：仍失败则以本地最新数据为准强制推送（保留本地真实数据，避免网页停更）
+            print(f"  ⚠️ 推送被拒（远程有并发更新），重新同步后重试 ({attempt}/{max_retries})...")
+            time.sleep(3)
+    # 兜底：仍失败则以本地最新数据为准强制推送（--force-with-lease 防止回退远程更新的数据）
     try:
-        subprocess.run(["git", "push", "--force-with-lease", "origin", "main"],
-                      cwd=SCRIPT_DIR, check=True, capture_output=True, text=True, timeout=60)
+        _safe_git(["push", "--force-with-lease", "origin", "main"], timeout=60)
         print("  ✅ 已以本地为准强制(lease)推送，网页将更新到最新本地数据")
         return True
     except Exception as e:
@@ -947,6 +1015,7 @@ def run_incremental():
         if is_weekday:
             print("  ⚠️ 主源(safe.gov.cn)与兜底源(BOC官网)在工作日均未取得数据，"
                   "疑似网络不可达，跳过本次更新（不伪造版本号，等后续重试）。")
+            notify_missed_update()
             return
         print("  期间无新数据（非工作日），重新计算预警并生成网页...")
         daily = _recompute_daily_from_existing(existing)
