@@ -1,6 +1,6 @@
 {
   "meta": {
-    "generated_at": "2026-11-19 10:51:46",
+    "generated_at": "2026-11-19 19:13:46",
     "start_date": "2021-06-21",
     "end_date": "2026-11-19",
     "total_days": 1312,
@@ -13,7 +13,7 @@
       "USD/JPY"
     ],
     "data_source": "中国人民银行官方中间价 (akshare)",
-    "version": "Ver1.147"
+    "version": "Ver1.148"
   },
   "daily": {
     "USD/CNY": {
